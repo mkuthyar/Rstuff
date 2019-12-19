@@ -227,4 +227,69 @@ qbs %>%
 
 ggsave('QBeffectiveness.png', dpi=1000)
 
+## Pulling Together Multiple Seasons ##
 
+first <- 2009 #first season to grab. min available=2009
+last <- 2018 # most recent season
+
+# Read all the csvs, and join them into a single DF, removing a few problem columns
+datalist = list()
+for (yr in first:last) {
+  pbp <- read_csv(url(paste0("https://github.com/ryurko/nflscrapR-data/raw/master/play_by_play_data/regular_season/reg_pbp_", yr, ".csv")))
+  games <- read_csv(url(paste0("https://raw.githubusercontent.com/ryurko/nflscrapR-data/master/games_data/regular_season/reg_games_", yr, ".csv")))
+  pbp <- pbp %>% inner_join(games %>% distinct(game_id, week, season)) %>% select(-fumble_recovery_2_yards, -fumble_recovery_2_player_id, -blocked_player_id)
+  datalist[[yr]] <- pbp # add it to your list
+}
+
+pbp_all <- dplyr::bind_rows(datalist)
+
+# Show number of season per team identifier; if any count is less than 10, then identified for that team has changed 
+
+pbp_all %>% group_by(home_team) %>%summarize(n=n(), seasons=n_distinct(season), minyr=min(season), maxyr=max(season)) %>% 
+  arrange(seasons)
+
+# Unite the team identifiers together that have changed
+pbp_all <- pbp_all %>% 
+  mutate_at(vars(home_team, away_team, posteam, defteam), funs(case_when(
+    . %in% "JAX" ~ "JAC",
+    . %in% "STL" ~ "LA",
+    . %in% "SD" ~ "LAC",
+    TRUE ~ .
+  ))) 
+
+# Save R Data so we don't have to load it every time
+saveRDS(pbp_all, file="2009-2018nflscrapR.rds")
+pbp_all <- readRDS("2009-2018nflscrapR.rds")
+
+# Perform all the cleaning we did before (create pass/rush columns, string cleaning, make penalties run/pass, etc)
+pbp_all_rp <- pbp_all %>%
+  filter(!is_na(epa), !is_na(posteam), play_type=="no_play" | play_type=="pass" | play_type=="run") %>%
+  mutate(
+    pass = if_else(str_detect(desc, "( pass)|(sacked)|(scramble)"), 1, 0),
+    rush = if_else(str_detect(desc, "(left end)|(left tackle)|(left guard)|(up the middle)|(right guard)|(right tackle)|(right end)") & pass == 0, 1, 0),
+    success = ifelse(epa>0, 1 , 0),
+    passer_player_name = ifelse(play_type == "no_play" & pass == 1, 
+                                str_extract(desc, "(?<=\\s)[A-Z][a-z]*\\.\\s?[A-Z][A-z]+(\\s(I{2,3})|(IV))?(?=\\s((pass)|(sack)|(scramble)))"),
+                                passer_player_name),
+    receiver_player_name = ifelse(play_type == "no_play" & str_detect(desc, "pass"), 
+                                  str_extract(desc, "(?<=to\\s)[A-Z][a-z]*\\.\\s?[A-Z][A-z]+(\\s(I{2,3})|(IV))?"),
+                                  receiver_player_name),
+    rusher_player_name = ifelse(play_type == "no_play" & rush == 1, 
+                                str_extract(desc, "(?<=\\s)[A-Z][a-z]*\\.\\s?[A-Z][A-z]+(\\s(I{2,3})|(IV))?(?=\\s((left end)|(left tackle)|(left guard)|		      (up the middle)|(right guard)|(right tackle)|(right end)))"),
+                                rusher_player_name),
+    name = ifelse(!is_na(passer_player_name), passer_player_name, rusher_player_name),
+    yards_gained=ifelse(play_type=="no_play",NA,yards_gained),
+    play=1
+  ) %>%
+  filter(pass==1 | rush==1)
+
+# Filter on passing plays, add arod, early, mean_epa, and ypp columns
+# early = 1 means 2009-2014, early -0 means 2015-2018; arod = 1 means Rodgers stats, arod = 0 means all other qb's
+# data shows Rodgers advantage over others qb's drops significantly in second period (and is actually worse in yards per play)
+pbp_all_rp %>% filter(pass==1 & !is.na(passer_player_name))%>% 
+  mutate(
+  arod = if_else(posteam=="GB"&passer_player_name=="A.Rodgers",1,0),
+  early = if_else(season<=2014,1,0)) %>%
+  group_by(arod,early) %>%
+  summarize(mean_epa=mean(epa), ypp=mean(yards_gained, na.rm = TRUE)) %>% 
+  arrange(-early)
