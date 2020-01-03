@@ -4,15 +4,14 @@ library(tidyverse)
 library(dplyr)
 library(ggimage)
 library(ggplot2)
-library(ggrepel)
 
 ## Load Data ##
 df_air <- fromJSON('http://airyards.com/2019/weeks')
-df_snapcounts <- read.csv("WRSnapCounts.csv")
-df_fantasy <- read.csv("WRfantasy.csv")
+df_snapcounts <- read.csv("https://raw.githubusercontent.com/mkuthyar/Rstuff/master/football/WRSnapCounts.csv")
+df_fantasy <- read.csv("https://raw.githubusercontent.com/mkuthyar/Rstuff/master/football/WRfantasy.csv")
 
 ## Compile total by adding weekly numbers and performing calculations ##
-df_air_totals <- df_air %>%
+air_totals <- df_air %>%
   group_by(player_id) %>%
   mutate(games_played = n(), 
   targets = sum(tar),
@@ -34,37 +33,40 @@ df_air_totals <- df_air %>%
   )
 
 ## Merge in snap data ##
-df_air_totals <- merge(df_snapcounts,df_air_totals, all=TRUE)
+air_totals <- merge(df_snapcounts,air_totals, all=TRUE)
 
 ## Merge in fantasy data ##
-df_air_totals <- merge(df_fantasy,df_air_totals, all=TRUE)
+air_totals <- merge(df_fantasy,air_totals, all=TRUE)
 
-## Filter by position, snap count and targets ##
-df_air_totals_filtered <- df_air_totals %>%
+## Filter by position, snap count and targets, and remove weekly data##
+air_totals_filtered <- air_totals %>%
   filter(position == "WR", totalsnaps > 30, targets >15) %>%
   select (-week,-index,-tar,-td,-rush_td,-rec,-rec_yards,-rush_yards,-yac,-air_yards,-tm_att,-team_air,-aypt,-racr,-ms_air_yards,-target_share,-wopr) %>%
   distinct()
 
 ## Compare fantasy PPG to WOPR ##
-fantasypointsvWOPR  <- df_air_totals_filtered%>% 
+fantasypointsvWOPR  <- air_totals_filtered%>% 
   filter(receiving_yards >300)%>%
-  ggplot(aes(x = fantasypoints_pg, y = avgwopr )) +
+  ggplot(aes(x = avgwopr, y = fantasypoints_pg )) +
   geom_point() +
   geom_text(aes(label=full_name),check_overlap = TRUE, size=3, hjust=.5, vjust=-.75) +
-  labs(x = "fantasypoints",
-       y = "WOPR",
+  labs(x = "WOPR",
+       y = "fantasypoints",
        caption = "Data from airyards",
        title = "fantasypoints and WOPR",
        subtitle = "2019") +
   theme_bw() +
-  geom_hline(yintercept = 0.5, color = "green", linetype = "dashed") +
-  geom_vline(xintercept = 10, color = "blue", linetype = "dashed") +
-  geom_smooth(method = "lm", se = FALSE)
+  #geom_hline(yintercept = 0.5, color = "green", linetype = "dashed") +
+  #geom_vline(xintercept = 10, color = "blue", linetype = "dashed") +
+  geom_smooth(method = "lm", se = FALSE) +
+  annotate(x=.3, y=17, 
+           label=paste("R = ", round(cor(air_totals_filtered$avgwopr, air_totals_filtered$fantasypoints_pg,use = "complete.obs"),2)), 
+           geom="text", size=5)
 
 fantasypointsvWOPR
 
 ## Compare RACR to WOPR
-RACRvWOPR  <- df_air_totals_filtered%>% 
+RACRvWOPR  <- air_totals_filtered%>% 
   filter(receiving_yards >300)%>%
   ggplot(aes(x = avgracr, y = avgwopr )) +
   geom_point() +
@@ -78,9 +80,28 @@ RACRvWOPR  <- df_air_totals_filtered%>%
   geom_hline(yintercept = 0.5, color = "green", linetype = "dashed")
 
 RACRvWOPR
+
+## Compare Air Yard and Target market share
+potayvtarget_percentage  <- air_totals_filtered%>% 
+  filter(receiving_yards >300)%>%
+  ggplot(aes(x = target_percentage, y = potay )) +
+  geom_point() +
+  geom_text(aes(label=full_name),check_overlap = TRUE, size=3, hjust=.5, vjust=-.75) +
+  labs(x = "target_percentage",
+       y = "potay",
+       caption = "Data from airyards",
+       title = "target_percentage and potay",
+       subtitle = "2019") +
+  theme_bw() +
+  geom_smooth(method = "lm", se = FALSE)
+  #geom_hline(yintercept = 0.5, color = "green", linetype = "dashed")
+
+potayvtarget_percentage
+
+cor(air_totals_filtered$target_percentage,air_totals_filtered$potay)
   
 ## Compile per game stats ##
-df_air_pergame <- df_air_totals_filtered %>%
+air_pergame <- air_totals_filtered %>%
   group_by(player_id) %>%
   mutate(targets_pg = (targets/games_played),
          receptions_pg = (receptions/games_played),
